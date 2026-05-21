@@ -2,29 +2,37 @@ import xarray as xr
 import numpy as np
 import glob
 
-# Load only instantaneous files
+# Load
 instant_files = sorted(glob.glob("era5_*/data_stream-oper_stepType-instant.nc"))
-
 ds = xr.open_mfdataset(instant_files, combine='by_coords')
-#print(ds)
 
-# 6 instantaneous variables
 var_names = ['t2m', 'msl', 'u10', 'v10', 'd2m', 'sp']
-
-# Stack into (T, C, H, W)
 arrays = [ds[var].values for var in var_names]
-data = np.stack(arrays, axis=1).astype(np.float32) # (T, 6, H, W)
-print(f"Shape: {data.shape}")
+data = np.stack(arrays, axis=1).astype(np.float32)
 
-# Compute and save normalization stats
-mean = data.mean(axis=(0, 2, 3), keepdims=True) # (1, C, 1, 1)
-std = data.std(axis=(0, 2, 3), keepdims=True)
+# Split by year
+train_mask = ds.valid_time.dt.year < 2020
+test_mask = ds.valid_time.dt.year >= 2020
 
-np.save('data.npy', data)
+train_data = data[train_mask.values]
+test_data = data[test_mask.values]
+
+# Stats from training set only
+mean = train_data.mean(axis=(0, 2, 3), keepdims=True)
+std = train_data.std(axis=(0, 2, 3), keepdims=True)
+
+# Latitude weights
+lats = ds.latitude.values
+lat_weights = np.cos(np.deg2rad(lats))
+lat_weights = lat_weights / lat_weights.mean()
+
+np.save('train_data.npy', train_data)
+np.save('test_data.npy', test_data)
 np.save('mean.npy', mean)
 np.save('std.npy', std)
+np.save('lat_weights.npy', lat_weights)
 
+print(f"Train: {train_data.shape}")
+print(f"Test: {test_data.shape}")
 print(f"Variables: {var_names}")
-print(f"Mean shape: {mean.shape}")
-print(f"Std shape: {std.shape}")
-print("Saved data.npy, mean.npy, std.npy")
+print("Saved all files")
