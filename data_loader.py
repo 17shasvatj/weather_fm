@@ -40,7 +40,18 @@ def get_dataloaders(train_path, test_path, mean_path, std_path,
 
     return train_loader, test_loader
 
+# Sanity check
+if __name__ == "__main__":
+    train_loader, test_loader = get_dataloaders(
+        'train_data.npy', 'test_data.npy', 'mean.npy', 'std.npy',
+        n_input_steps=2, batch_size=16,
+    )
 
+    x, y = next(iter(train_loader))
+    print(f"Input shape: {x.shape}")
+    print(f"Target shape: {y.shape}")
+    print(f"Target mean: {y.mean():.4f}")  # should be near 0
+    print(f"Target std: {y.std():.4f}")
 
 
 
