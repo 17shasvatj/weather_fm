@@ -15,7 +15,6 @@ class PatchEmbedding(nn.Module):
         # x: (B, C, H, W)
         # return: (B, num_patches, embed_dim)
         return self.patch_conv(x).flatten(2).permute(0, 2, 1)
-        # (B, embed_dim, patch_h, patch_w)
 
 class MultiHeadSelfAttention(nn.Module):
     def __init__(self, embed_dim, num_heads):
