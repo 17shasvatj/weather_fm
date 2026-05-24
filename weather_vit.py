@@ -113,5 +113,5 @@ class WeatherViT(nn.Module):
             h = block(h)
         h = self.norm(h)
         h = self.prediction_head(h) # (B, num_patches, out_channels * patch_h * patch_w)
-        h = self.unpatchify(h) #(B, out_channels, H_pad, W_pad)
+        h = self.unpatchify(h) # (B, out_channels, H_pad, W_pad)
         return h[:, :, 0:self.img_h, 0:self.img_w]
