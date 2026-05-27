@@ -5,9 +5,9 @@ from torch.utils.data import Dataset, DataLoader
 
 class WeatherDataset(Dataset):
     def __init__(self, data_path, mean_path, std_path, n_input_steps=2):
-        self.data = np.load(data_path)
-        self.mean = np.load(mean_path)  # (1, 21, 1, 1)
-        self.std = np.load(std_path)    # (1, 21, 1, 1)
+        self.data = np.load(data_path, mmap_mode='r')
+        self.mean = np.load(mean_path)
+        self.std = np.load(std_path)
         self.n_input_steps = n_input_steps
 
     def __len__(self):
