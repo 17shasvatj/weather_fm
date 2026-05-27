@@ -10,8 +10,8 @@ from data_loader import WeatherDataset
 from weather_vit import WeatherViT
 
 # === Config ===
-TRAIN_DATA = 'train_data.npy'
-TEST_DATA = 'test_data.npy'
+TRAIN_DATA = 'train_norm.npy'
+TEST_DATA = 'test_norm.npy'
 LAT_WEIGHTS = 'lat_weights.npy'
 
 N_INPUT_STEPS = 2
@@ -29,8 +29,8 @@ DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 print(f"Using device: {DEVICE}")
 
 # === Data ===
-train_set = WeatherDataset(TRAIN_DATA, 'mean.npy', 'std.npy', n_input_steps=N_INPUT_STEPS)
-test_set = WeatherDataset(TEST_DATA, 'mean.npy', 'std.npy', n_input_steps=N_INPUT_STEPS)
+train_set = WeatherDataset(TRAIN_DATA, n_input_steps=N_INPUT_STEPS)
+test_set = WeatherDataset(TEST_DATA, n_input_steps=N_INPUT_STEPS)
 
 train_loader = DataLoader(train_set, batch_size=BATCH_SIZE, shuffle=True, num_workers=4, pin_memory=True)
 test_loader = DataLoader(test_set, batch_size=BATCH_SIZE, shuffle=False, num_workers=4, pin_memory=True)
