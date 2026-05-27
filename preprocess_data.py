@@ -19,7 +19,7 @@ years = ds_sfc[time_coord].dt.year.values
 arrays = []
 for var in surface_var_names:
     print(f"  {var}", flush=True)
-    arrays.append(ds_sfc[var].values)
+    arrays.append(ds_sfc[var].values.astype(np.float32))
 
 ds_sfc.close()
 del ds_sfc
@@ -33,7 +33,7 @@ ds_pl = xr.open_mfdataset(pl_files, combine='by_coords')
 for var in pressure_var_names:
     for level in levels:
         print(f"  {var} @ {level}", flush=True)
-        arrays.append(ds_pl[var].sel(pressure_level=level).values)
+        arrays.append(ds_pl[var].sel(pressure_level=level).values.astype(np.float32))
 
 ds_pl.close()
 del ds_pl
@@ -41,11 +41,12 @@ print("  Pressure closed, memory freed", flush=True)
 
 # Stack
 print("Stacking...", flush=True)
-data = np.stack(arrays, axis=1).astype(np.float32)
+data = np.stack(arrays, axis=1)
 del arrays
 print(f"Shape: {data.shape}", flush=True)
 
 # Split
+print("Splitting...", flush=True)
 train_data = data[years < 2020]
 test_data = data[years >= 2020]
 del data
@@ -53,6 +54,7 @@ print(f"Train: {train_data.shape}", flush=True)
 print(f"Test: {test_data.shape}", flush=True)
 
 # Stats
+print("Computing stats...", flush=True)
 mean = train_data.mean(axis=(0, 2, 3), keepdims=True)
 std = train_data.std(axis=(0, 2, 3), keepdims=True)
 
@@ -62,8 +64,11 @@ lat_weights = np.cos(np.deg2rad(lats))
 lat_weights = lat_weights / lat_weights.mean()
 
 # Save
+print("Saving...", flush=True)
 np.save('train_data.npy', train_data)
+del train_data
 np.save('test_data.npy', test_data)
+del test_data
 np.save('mean.npy', mean)
 np.save('std.npy', std)
 np.save('lat_weights.npy', lat_weights)
