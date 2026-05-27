@@ -6,17 +6,16 @@ import os
 import time
 from torch.utils.data import DataLoader
 
-from dataloader import WeatherDataset
-from model import WeatherViT
-
+from data_loader import WeatherDataset
+from weather_vit import WeatherViT
 
 # === Config ===
-TRAIN_DATA = 'train_norm.npy'
-TEST_DATA = 'test_norm.npy'
+TRAIN_DATA = 'train_data.npy'
+TEST_DATA = 'test_data.npy'
 LAT_WEIGHTS = 'lat_weights.npy'
 
 N_INPUT_STEPS = 2
-BATCH_SIZE = 8
+BATCH_SIZE = 16
 NUM_EPOCHS = 20
 LR = 1e-4
 WEIGHT_DECAY = 1e-5
@@ -24,60 +23,50 @@ WARMUP_STEPS = 500
 GRAD_CLIP = 1.0
 LOG_EVERY = 50
 SAVE_EVERY_EPOCH = 5
+NUM_VARS = 21
 
-DEVICE = (
-    'cuda' if torch.cuda.is_available()
-    else 'mps' if torch.backends.mps.is_available()
-    else 'cpu'
-)
+DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 print(f"Using device: {DEVICE}")
 
-
 # === Data ===
-train_set = WeatherDataset(TRAIN_DATA, n_input_steps=N_INPUT_STEPS)
-test_set = WeatherDataset(TEST_DATA, n_input_steps=N_INPUT_STEPS)
+train_set = WeatherDataset(TRAIN_DATA, 'mean.npy', 'std.npy', n_input_steps=N_INPUT_STEPS)
+test_set = WeatherDataset(TEST_DATA, 'mean.npy', 'std.npy', n_input_steps=N_INPUT_STEPS)
 
-num_workers = 0 if DEVICE == 'mps' else 2
-
-train_loader = DataLoader(train_set, batch_size=BATCH_SIZE, shuffle=True, num_workers=num_workers)
-test_loader = DataLoader(test_set, batch_size=BATCH_SIZE, shuffle=False, num_workers=num_workers)
+train_loader = DataLoader(train_set, batch_size=BATCH_SIZE, shuffle=True, num_workers=4, pin_memory=True)
+test_loader = DataLoader(test_set, batch_size=BATCH_SIZE, shuffle=False, num_workers=4, pin_memory=True)
 
 print(f"Train samples: {len(train_set)}")
 print(f"Test samples: {len(test_set)}")
-
+print(f"Input channels: {N_INPUT_STEPS * NUM_VARS}")
+print(f"Target channels: {NUM_VARS}")
 
 # === Latitude-weighted MSE loss ===
-lat_weights = np.load(LAT_WEIGHTS)  # (H,)
-lat_weights = torch.tensor(lat_weights, dtype=torch.float32).to(DEVICE)  # (H,)
+lat_weights = np.load(LAT_WEIGHTS)
+lat_weights = torch.tensor(lat_weights, dtype=torch.float32).to(DEVICE)
 
 
 def weighted_mse_loss(pred, target, lat_w):
-    """
-    pred, target: (B, C, H, W)
-    lat_w: (H,)
-    """
-    error = (pred - target) ** 2  # (B, C, H, W)
-    weighted = error * lat_w[None, None, :, None]  # broadcast over B, C, W
+    error = (pred - target) ** 2
+    weighted = error * lat_w[None, None, :, None]
     return weighted.mean()
 
 
 # === Model ===
 model = WeatherViT(
-    in_channels=N_INPUT_STEPS * 6,
-    out_channels=6,
+    in_channels=N_INPUT_STEPS * NUM_VARS,
+    out_channels=NUM_VARS,
     img_h=105,
     img_w=281,
     patch_h=3,
     patch_w=3,
-    embed_dim=128,
-    num_heads=4,
-    num_layers=4,
-    ff_hidden_dim=512,
+    embed_dim=256,
+    num_heads=8,
+    num_layers=8,
+    ff_hidden_dim=1024,
 ).to(DEVICE)
 
 num_params = sum(p.numel() for p in model.parameters())
 print(f"Parameters: {num_params:,}")
-
 
 # === Optimizer + Scheduler ===
 optimizer = torch.optim.AdamW(model.parameters(), lr=LR, weight_decay=WEIGHT_DECAY)
@@ -86,7 +75,6 @@ total_steps = len(train_loader) * NUM_EPOCHS
 
 
 def lr_lambda(step):
-    # Linear warmup then cosine decay
     if step < WARMUP_STEPS:
         return step / WARMUP_STEPS
     progress = (step - WARMUP_STEPS) / (total_steps - WARMUP_STEPS)
@@ -95,6 +83,41 @@ def lr_lambda(step):
 
 scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
 
+# === Sanity check: overfit one batch ===
+print("\n=== Sanity check: overfitting one batch ===")
+test_optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+
+x, y = next(iter(train_loader))
+x, y = x.to(DEVICE), y.to(DEVICE)
+print(f"Input shape: {x.shape}")
+print(f"Target shape: {y.shape}")
+
+for i in range(100):
+    pred = model(x)
+    loss = weighted_mse_loss(pred, y, lat_weights)
+    test_optimizer.zero_grad()
+    loss.backward()
+    test_optimizer.step()
+    if i % 10 == 0:
+        print(f"  Step {i} | Loss: {loss.item():.6f}")
+
+# Reinitialize model and optimizer for real training
+print("\n=== Reinitializing for full training ===")
+model = WeatherViT(
+    in_channels=N_INPUT_STEPS * NUM_VARS,
+    out_channels=NUM_VARS,
+    img_h=105,
+    img_w=281,
+    patch_h=3,
+    patch_w=3,
+    embed_dim=256,
+    num_heads=8,
+    num_layers=8,
+    ff_hidden_dim=1024,
+).to(DEVICE)
+
+optimizer = torch.optim.AdamW(model.parameters(), lr=LR, weight_decay=WEIGHT_DECAY)
+scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
 
 # === Training ===
 os.makedirs('checkpoints', exist_ok=True)
@@ -131,7 +154,7 @@ for epoch in range(1, NUM_EPOCHS + 1):
             steps_per_sec = epoch_steps / elapsed
             print(f"  Step {global_step} | Loss: {loss.item():.6f} | "
                   f"Avg: {avg_loss:.6f} | LR: {lr:.2e} | "
-                  f"Speed: {steps_per_sec:.1f} steps/s")
+                  f"Speed: {steps_per_sec:.1f} steps/s", flush=True)
 
     train_loss = epoch_loss / epoch_steps
 
@@ -155,13 +178,13 @@ for epoch in range(1, NUM_EPOCHS + 1):
     print(f"Epoch {epoch}/{NUM_EPOCHS} | "
           f"Train Loss: {train_loss:.6f} | "
           f"Test Loss: {test_loss:.6f} | "
-          f"Time: {elapsed:.1f}s")
+          f"Time: {elapsed:.1f}s", flush=True)
 
     # Save best model
     if test_loss < best_test_loss:
         best_test_loss = test_loss
         torch.save(model.state_dict(), 'checkpoints/best_model.pt')
-        print(f"  → Saved best model (test loss: {test_loss:.6f})")
+        print(f"  → Saved best model (test loss: {test_loss:.6f})", flush=True)
 
     # Periodic checkpoint
     if epoch % SAVE_EVERY_EPOCH == 0:
@@ -174,6 +197,6 @@ for epoch in range(1, NUM_EPOCHS + 1):
             'test_loss': test_loss,
             'global_step': global_step,
         }, f'checkpoints/epoch_{epoch}.pt')
-        print(f"  → Saved checkpoint epoch {epoch}")
+        print(f"  → Saved checkpoint epoch {epoch}", flush=True)
 
 print(f"\nTraining complete. Best test loss: {best_test_loss:.6f}")
