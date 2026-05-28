@@ -24,11 +24,11 @@ WEIGHT_DECAY = 1e-5
 WARMUP_STEPS = 500
 GRAD_CLIP = 1.0
 LOG_EVERY = 50
-SAVE_EVERY_EPOCH = 5
+SAVE_EVERY_EPOCH = 2
 NUM_VARS = 21
 
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
-print(f"Using device: {DEVICE}")
+print(f"Using device: {DEVICE}", flush=True)
 
 # === Data ===
 train_set = WeatherDataset(TRAIN_DATA, MEAN, STD, n_input_steps=N_INPUT_STEPS)
@@ -37,10 +37,8 @@ test_set = WeatherDataset(TEST_DATA, MEAN, STD, n_input_steps=N_INPUT_STEPS)
 train_loader = DataLoader(train_set, batch_size=BATCH_SIZE, shuffle=True, num_workers=4, pin_memory=True)
 test_loader = DataLoader(test_set, batch_size=BATCH_SIZE, shuffle=False, num_workers=4, pin_memory=True)
 
-print(f"Train samples: {len(train_set)}")
-print(f"Test samples: {len(test_set)}")
-print(f"Input channels: {N_INPUT_STEPS * NUM_VARS}")
-print(f"Target channels: {NUM_VARS}")
+print(f"Train samples: {len(train_set)}", flush=True)
+print(f"Test samples: {len(test_set)}", flush=True)
 
 # === Latitude-weighted MSE loss ===
 lat_weights = np.load(LAT_WEIGHTS)
@@ -54,46 +52,23 @@ def weighted_mse_loss(pred, target, lat_w):
 
 
 # === Model ===
-def make_model():
-    return WeatherViT(
-        in_channels=N_INPUT_STEPS * NUM_VARS,
-        out_channels=NUM_VARS,
-        img_h=105,
-        img_w=281,
-        patch_h=3,
-        patch_w=3,
-        embed_dim=256,
-        num_heads=8,
-        num_layers=8,
-        ff_hidden_dim=1024,
-    ).to(DEVICE)
+model = WeatherViT(
+    in_channels=N_INPUT_STEPS * NUM_VARS,
+    out_channels=NUM_VARS,
+    img_h=105,
+    img_w=281,
+    patch_h=3,
+    patch_w=3,
+    embed_dim=256,
+    num_heads=8,
+    num_layers=8,
+    ff_hidden_dim=1024,
+).to(DEVICE)
 
-
-model = make_model()
 num_params = sum(p.numel() for p in model.parameters())
-print(f"Parameters: {num_params:,}")
+print(f"Parameters: {num_params:,}", flush=True)
 
-# === Sanity check: overfit one batch ===
-print("\n=== Sanity check: overfitting one batch ===", flush=True)
-test_optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
-
-x, y = next(iter(train_loader))
-x, y = x.to(DEVICE), y.to(DEVICE)
-print(f"Input shape: {x.shape}")
-print(f"Target shape: {y.shape}")
-
-for i in range(100):
-    pred = model(x)
-    loss = weighted_mse_loss(pred, y, lat_weights)
-    test_optimizer.zero_grad()
-    loss.backward()
-    test_optimizer.step()
-    if i % 10 == 0:
-        print(f"  Step {i} | Loss: {loss.item():.6f}", flush=True)
-
-# === Reinitialize for full training ===
-print("\n=== Reinitializing for full training ===", flush=True)
-model = make_model()
+# === Optimizer + Scheduler ===
 optimizer = torch.optim.AdamW(model.parameters(), lr=LR, weight_decay=WEIGHT_DECAY)
 
 total_steps = len(train_loader) * NUM_EPOCHS
@@ -108,12 +83,24 @@ def lr_lambda(step):
 
 scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
 
+# === Resume from checkpoint ===
+RESUME_PATH = 'checkpoints/epoch_5.pt'
+
+print(f"Loading checkpoint: {RESUME_PATH}", flush=True)
+ckpt = torch.load(RESUME_PATH, map_location=DEVICE)
+model.load_state_dict(ckpt['model_state_dict'])
+optimizer.load_state_dict(ckpt['optimizer_state_dict'])
+scheduler.load_state_dict(ckpt['scheduler_state_dict'])
+start_epoch = ckpt['epoch'] + 1
+global_step = ckpt['global_step']
+best_test_loss = ckpt['test_loss']
+print(f"Resumed: epoch {start_epoch}, step {global_step}, best test loss {best_test_loss:.6f}", flush=True)
+print(f"Current LR: {scheduler.get_last_lr()[0]:.2e}", flush=True)
+
 # === Training ===
 os.makedirs('checkpoints', exist_ok=True)
-global_step = 0
-best_test_loss = float('inf')
 
-for epoch in range(1, NUM_EPOCHS + 1):
+for epoch in range(start_epoch, NUM_EPOCHS + 1):
     model.train()
     epoch_loss = 0.0
     epoch_steps = 0
@@ -175,7 +162,7 @@ for epoch in range(1, NUM_EPOCHS + 1):
         torch.save(model.state_dict(), 'checkpoints/best_model.pt')
         print(f"  → Saved best model (test loss: {test_loss:.6f})", flush=True)
 
-    # Periodic checkpoint
+    # Checkpoint every 2 epochs now
     if epoch % SAVE_EVERY_EPOCH == 0:
         torch.save({
             'epoch': epoch,
