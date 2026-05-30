@@ -123,8 +123,9 @@ rollout_steps = [1, 2, 4, 8, 12]  # 6h, 12h, 24h, 48h, 72h
 max_rollout = max(rollout_steps)
 
 # Pick evenly spaced start points in the test set
-n_rollouts = 50
+n_rollouts = 200
 start_indices = np.linspace(N_INPUT_STEPS, T - max_rollout - 1, n_rollouts, dtype=int)
+
 
 rollout_rmse = {s: np.zeros(NUM_VARS) for s in rollout_steps}
 persist_rollout_rmse = {s: np.zeros(NUM_VARS) for s in rollout_steps}
