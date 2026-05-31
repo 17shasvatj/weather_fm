@@ -5,6 +5,10 @@ Surface Level Variables used:
 
 2m_temperature, mean_sea_level_temperature, 10m_u_component_of_wind, 10m_v_component_of_wind, 2m_dewpoint_temperature, surface_pressure
 
+Pressure level Variables Used:
+
+Geopotential (z), Temperature (t), u-wind (u), v-wind (v), Specific humidity (q), 
+@ Pressure Levels: 500, 700, 850 hPa
 
 Coordinates: [50, -130, 24, -60] (North, West, South, East)
 Region: Continental US
